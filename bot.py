@@ -8,11 +8,22 @@ import json
 import requests
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
+import sys
+import time
 
 # ========== КОНФИГУРАЦИЯ ==========
 
 # Токен бота из переменных окружения
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
+
+# Проверка обязательных переменных окружения
+if not BOT_TOKEN:
+    print("❌ КРИТИЧЕСКАЯ ОШИБКА: BOT_TOKEN не установлен")
+    print("📝 Убедитесь, что вы установили переменную окружения BOT_TOKEN на Render.com")
+    print("🔧 В разделе Environment Variables добавьте:")
+    print("   Key: BOT_TOKEN")
+    print("   Value: ваш_токен_от_BotFather")
+    sys.exit(1)
 
 # Настройки Google Sheets и Drive
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
@@ -23,33 +34,53 @@ GOOGLE_DRIVE_FOLDER_ID = os.environ.get('GOOGLE_DRIVE_FOLDER_ID')
 def get_google_credentials():
     credentials_json = os.environ.get('GOOGLE_CREDENTIALS_JSON')
     if credentials_json:
-        # Чтение из переменной окружения (для production)
-        credentials_dict = json.loads(credentials_json)
-        return Credentials.from_service_account_info(credentials_dict, scopes=SCOPES)
+        try:
+            # Чтение из переменной окружения (для production)
+            credentials_dict = json.loads(credentials_json)
+            return Credentials.from_service_account_info(credentials_dict, scopes=SCOPES)
+        except json.JSONDecodeError as e:
+            print(f"❌ Ошибка парсинга GOOGLE_CREDENTIALS_JSON: {e}")
+            return None
     else:
         # Локальная разработка - из файла
         try:
-            return Credentials.from_service_account_file('credentials.json', scopes=SCOPES)
+            if os.path.exists('credentials.json'):
+                return Credentials.from_service_account_file('credentials.json', scopes=SCOPES)
+            else:
+                print("⚠️  Файл credentials.json не найден. Google Sheets и Drive не будут работать.")
+                return None
         except Exception as e:
-            print(f"Ошибка загрузки credentials: {e}")
+            print(f"❌ Ошибка загрузки credentials: {e}")
             return None
 
 # Инициализация бота и Google API
-bot = telebot.TeleBot(BOT_TOKEN)
+try:
+    bot = telebot.TeleBot(BOT_TOKEN)
+    print("✅ Бот инициализирован")
+except Exception as e:
+    print(f"❌ Ошибка инициализации бота: {e}")
+    sys.exit(1)
+
 credentials = get_google_credentials()
+sheet = None
+gc = None
 
 if credentials:
-    gc = gspread.authorize(credentials)
     try:
+        gc = gspread.authorize(credentials)
         spreadsheet = gc.open(SPREADSHEET_NAME)
         sheet = spreadsheet.sheet1
         print("✅ Успешное подключение к Google Таблице")
+    except gspread.SpreadsheetNotFound:
+        print(f"❌ Таблица '{SPREADSHEET_NAME}' не найдена")
+        print("📝 Убедитесь, что:")
+        print("   1. Таблица существует и к ней есть доступ")
+        print("   2. GOOGLE_SHEET_NAME указан правильно")
+        print("   3. Сервисный аккаунт добавлен в редакторы таблицы")
     except Exception as e:
         print(f"❌ Ошибка подключения к Google Таблице: {e}")
-        sheet = None
 else:
-    print("❌ Не удалось инициализировать Google credentials")
-    sheet = None
+    print("⚠️  Google credentials не загружены. Данные не будут сохраняться в таблицу.")
 
 # Словарь для временного хранения данных пользователей
 user_data = {}
@@ -136,14 +167,19 @@ class PhotoManager:
 
 # Инициализация менеджера фото
 if credentials and GOOGLE_DRIVE_FOLDER_ID:
-    photo_manager = PhotoManager(
-        bot_token=BOT_TOKEN,
-        drive_credentials=credentials,
-        drive_folder_id=GOOGLE_DRIVE_FOLDER_ID
-    )
+    try:
+        photo_manager = PhotoManager(
+            bot_token=BOT_TOKEN,
+            drive_credentials=credentials,
+            drive_folder_id=GOOGLE_DRIVE_FOLDER_ID
+        )
+        print("✅ Менеджер фото инициализирован")
+    except Exception as e:
+        print(f"❌ Ошибка инициализации менеджера фото: {e}")
+        photo_manager = None
 else:
     photo_manager = None
-    print("⚠️  Менеджер фото не инициализирован: отсутствуют credentials или folder_id")
+    print("⚠️  Менеджер фото не инициализирован: отсутствуют credentials или GOOGLE_DRIVE_FOLDER_ID")
 
 # ========== КЛАВИАТУРЫ ==========
 def phone_keyboard():
@@ -311,8 +347,12 @@ def process_photo_step(message):
         photo_id = message.photo[-1].file_id
         
         if photo_manager:
-            photo_result = photo_manager.process_photo(photo_id, chat_id)
-            user_data[chat_id]['photo'] = photo_result
+            try:
+                photo_result = photo_manager.process_photo(photo_id, chat_id)
+                user_data[chat_id]['photo'] = photo_result
+            except Exception as e:
+                print(f"Ошибка обработки фото: {e}")
+                user_data[chat_id]['photo'] = "Ошибка загрузки фото"
         else:
             user_data[chat_id]['photo'] = "Фото загружено (Drive не настроен)"
         
@@ -446,13 +486,43 @@ def handle_other_messages(message):
 
 # ========== ЗАПУСК БОТА ==========
 if __name__ == '__main__':
-    print("🚀 Бот запускается...")
-    print(f"✅ Токен бота: {'Установлен' if BOT_TOKEN else 'Отсутствует'}")
-    print(f"✅ Google Таблица: {'Доступна' if sheet else 'Не доступна'}")
-    print(f"✅ Google Drive: {'Настроен' if photo_manager and GOOGLE_DRIVE_FOLDER_ID else 'Не настроен'}")
+    print("=" * 50)
+    print("🚀 Запуск Telegram бота для доставки из Китая")
+    print("=" * 50)
+    
+    # Проверка конфигурации
+    print("📋 Конфигурация:")
+    print(f"   ✅ Токен бота: {'Установлен' if BOT_TOKEN else '❌ ОТСУТСТВУЕТ'}")
+    print(f"   📊 Google Таблица: {'Доступна' if sheet else '❌ Не доступна'}")
+    print(f"   🖼️  Google Drive: {'Настроен' if photo_manager and GOOGLE_DRIVE_FOLDER_ID else '❌ Не настроен'}")
+    
+    if not BOT_TOKEN:
+        print("\n❌ КРИТИЧЕСКАЯ ОШИБКА: BOT_TOKEN не установлен!")
+        print("📝 Для решения проблемы:")
+        print("   1. Перейдите на Render.com в настройки вашего сервиса")
+        print("   2. В разделе 'Environment Variables' добавьте:")
+        print("      Key: BOT_TOKEN")
+        print("      Value: ваш_токен_от_BotFather")
+        print("   3. Перезапустите деплой")
+        sys.exit(1)
+    
+    print("\n✅ Все проверки пройдены. Запуск бота...")
     
     try:
-        print("🔄 Запуск long-polling...")
+        # Проверяем, что бот может получить информацию о себе
+        bot_info = bot.get_me()
+        print(f"🤖 Бот @{bot_info.username} успешно запущен!")
+        print("🔗 Бот готов к работе и ожидает сообщений...")
+        
+        # Запускаем опрос
         bot.infinity_polling(timeout=60, long_polling_timeout=60)
+        
     except Exception as e:
         print(f"❌ Ошибка при запуске бота: {e}")
+        print("📝 Возможные причины:")
+        print("   - Неверный токен бота")
+        print("   - Проблемы с сетью")
+        print("   - Бот заблокирован")
+        
+        # Пауза перед повторной попыткой (если будет перезапуск)
+        time.sleep(10)
