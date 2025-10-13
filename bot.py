@@ -4,42 +4,140 @@ import gspread
 from google.oauth2.service_account import Credentials
 import datetime
 import os
+import json
+import requests
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
 
 # ========== КОНФИГУРАЦИЯ ==========
 
-# Токен бота от BotFather
+# Токен бота из переменных окружения
 BOT_TOKEN = 8329132359:AAEJG8vQ2DGjJUKBTchWxHYoIKBjw5_1cd0
 
-# Настройки доступа к Google Sheets
-SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
-CREDENTIALS_FILE = 'credentials.json'  # Путь к вашему JSON-файлу
-SPREADSHEET_NAME = 'Заявки на доставку из Китая'  # Название вашей таблицы
+# Настройки Google Sheets и Drive
+SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+SPREADSHEET_NAME = os.environ.get('GOOGLE_SHEET_NAME', 'Заявки на доставку из Китая')
+GOOGLE_DRIVE_FOLDER_ID = os.environ.get('GOOGLE_DRIVE_FOLDER_ID')
 
-# Инициализация бота
+# Загрузка credentials из переменной окружения
+def get_google_credentials():
+    credentials_json = os.environ.get('GOOGLE_CREDENTIALS_JSON')
+    if credentials_json:
+        # Чтение из переменной окружения (для production)
+        credentials_dict = json.loads(credentials_json)
+        return Credentials.from_service_account_info(credentials_dict, scopes=SCOPES)
+    else:
+        # Локальная разработка - из файла
+        try:
+            return Credentials.from_service_account_file('credentials.json', scopes=SCOPES)
+        except Exception as e:
+            print(f"Ошибка загрузки credentials: {e}")
+            return None
+
+# Инициализация бота и Google API
 bot = telebot.TeleBot(BOT_TOKEN)
+credentials = get_google_credentials()
 
-# Инициализация Google Sheets
-credentials = Credentials.from_service_account_file(CREDENTIALS_FILE, scopes=SCOPES)
-gc = gspread.authorize(credentials)
-sheet = gc.open(SPREADSHEET_NAME).sheet1  # Работаем с первым листом
+if credentials:
+    gc = gspread.authorize(credentials)
+    try:
+        spreadsheet = gc.open(SPREADSHEET_NAME)
+        sheet = spreadsheet.sheet1
+        print("✅ Успешное подключение к Google Таблице")
+    except Exception as e:
+        print(f"❌ Ошибка подключения к Google Таблице: {e}")
+        sheet = None
+else:
+    print("❌ Не удалось инициализировать Google credentials")
+    sheet = None
 
 # Словарь для временного хранения данных пользователей
 user_data = {}
 
-# ========== ОПРЕДЕЛЕНИЕ СОСТОЯНИЙ ==========
-class UserState:
-    NAME = 1
-    PHONE = 2
-    ORIGIN_CITY = 3
-    DESTINATION_CITY = 4
-    CARGO_DESCRIPTION = 5
-    WEBSITE_LINK = 6
-    PHOTO = 7
-    WEIGHT = 8
-    VOLUME = 9
-    DELIVERY_METHOD = 10
-    BUDGET = 11
-    COMMENT = 12
+# ========== КЛАСС ДЛЯ РАБОТЫ С ФОТО ==========
+class PhotoManager:
+    def __init__(self, bot_token, drive_credentials, drive_folder_id):
+        self.bot_token = bot_token
+        self.drive_credentials = drive_credentials
+        self.drive_folder_id = drive_folder_id
+        self.temp_dir = "temp_photos"
+        os.makedirs(self.temp_dir, exist_ok=True)
+    
+    def download_photo(self, file_id, chat_id):
+        """Скачивание фото с Telegram"""
+        try:
+            file_info = bot.get_file(file_id)
+            file_url = f"https://api.telegram.org/file/bot{self.bot_token}/{file_info.file_path}"
+            
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"photo_{chat_id}_{timestamp}.jpg"
+            file_path = os.path.join(self.temp_dir, filename)
+            
+            response = requests.get(file_url)
+            with open(file_path, 'wb') as f:
+                f.write(response.content)
+            
+            return filename, file_path
+        except Exception as e:
+            print(f"Ошибка скачивания фото: {e}")
+            return None, None
+    
+    def upload_to_drive(self, file_path, filename):
+        """Загрузка на Google Drive"""
+        try:
+            drive_service = build('drive', 'v3', credentials=self.drive_credentials)
+            
+            file_metadata = {
+                'name': filename,
+                'parents': [self.drive_folder_id]
+            }
+            
+            media = MediaFileUpload(file_path, resumable=True)
+            file = drive_service.files().create(
+                body=file_metadata,
+                media_body=media,
+                fields='id, webViewLink'
+            ).execute()
+            
+            # Делаем файл публично доступным
+            drive_service.permissions().create(
+                fileId=file['id'],
+                body={'type': 'anyone', 'role': 'reader'},
+                fields='id'
+            ).execute()
+            
+            return file.get('webViewLink')
+        except Exception as e:
+            print(f"Ошибка загрузки на Drive: {e}")
+            return None
+    
+    def process_photo(self, file_id, chat_id):
+        """Полный процесс обработки фото"""
+        if not self.drive_credentials or not self.drive_folder_id:
+            return "Фото загружено (Drive не настроен)"
+        
+        # Скачиваем
+        filename, file_path = self.download_photo(file_id, chat_id)
+        if not filename:
+            return "Ошибка загрузки фото"
+        
+        # Загружаем на Drive
+        drive_link = self.upload_to_drive(file_path, filename)
+        
+        # Очищаем временный файл
+        try:
+            os.remove(file_path)
+        except:
+            pass
+        
+        return drive_link if drive_link else f"Фото: {filename} (не загружено в Drive)"
+
+# Инициализация менеджера фото
+photo_manager = PhotoManager(
+    bot_token=BOT_TOKEN,
+    drive_credentials=credentials,
+    drive_folder_id=GOOGLE_DRIVE_FOLDER_ID
+) if credentials else None
 
 # ========== КЛАВИАТУРЫ ==========
 def phone_keyboard():
@@ -96,6 +194,34 @@ def cancel_request(message):
     if chat_id in user_data:
         del user_data[chat_id]
     bot.send_message(chat_id, "Заявка отменена. Чтобы начать заново, отправьте /start.", reply_markup=types.ReplyKeyboardRemove())
+
+@bot.message_handler(commands=['help'])
+def send_help(message):
+    help_text = """
+    🤖 *Помощь по боту*
+
+    Команды:
+    /start - начать новую заявку
+    /help - показать эту справку
+    /status - проверить статус бота
+
+    По вопросам работы бота обращайтесь к нашему менеджеру.
+    """
+    bot.send_message(message.chat.id, help_text, parse_mode='Markdown')
+
+@bot.message_handler(commands=['status'])
+def send_status(message):
+    status_text = """
+    ✅ *Статус бота*
+
+    Бот работает нормально.
+    Google Таблица: {sheet_status}
+    Google Drive: {drive_status}
+    """.format(
+        sheet_status="✅ Подключена" if sheet else "❌ Ошибка подключения",
+        drive_status="✅ Настроен" if photo_manager and GOOGLE_DRIVE_FOLDER_ID else "❌ Не настроен"
+    )
+    bot.send_message(message.chat.id, status_text, parse_mode='Markdown')
 
 # ========== ЛОГИКА ДИАЛОГА ==========
 def process_name_step(message):
@@ -175,9 +301,15 @@ def process_photo_step(message):
         bot.send_message(chat_id, "⚖️ Укажите *приблизительный вес груза (в кг)*:", parse_mode='Markdown', reply_markup=cancel_keyboard())
         bot.register_next_step_handler(message, process_weight_step)
     elif message.photo:
-        # Сохраняем информацию о фото (file_id)
+        # Обрабатываем фото
         photo_id = message.photo[-1].file_id
-        user_data[chat_id]['photo'] = f"Фото загружено (ID: {photo_id})"
+        
+        if photo_manager:
+            photo_result = photo_manager.process_photo(photo_id, chat_id)
+            user_data[chat_id]['photo'] = photo_result
+        else:
+            user_data[chat_id]['photo'] = "Фото загружено (Drive не настроен)"
+        
         bot.send_message(chat_id, "✅ Фото принято! Теперь укажите *приблизительный вес груза (в кг)*:", parse_mode='Markdown', reply_markup=cancel_keyboard())
         bot.register_next_step_handler(message, process_weight_step)
     else:
@@ -263,16 +395,21 @@ def process_comment_step(message):
     bot.send_message(chat_id, final_message, parse_mode='Markdown', reply_markup=types.ReplyKeyboardRemove())
 
     # Очищаем временные данные
-    del user_data[chat_id]
+    if chat_id in user_data:
+        del user_data[chat_id]
 
 def save_data_to_sheet(chat_id, username, data):
     """Функция для сохранения данных в Google Таблицу"""
+    if not sheet:
+        print(f"❌ Не удалось сохранить данные: таблица не доступна")
+        return
+        
     try:
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         row = [
             "Новая заявка на доставку",  # Название блоков
             timestamp,                   # Дата заявки / Timestamp
-            chat_id,                     # User ID
+            str(chat_id),                # User ID
             f"@{username}" if username else "Не указан",  # Username
             data.get('name', ''),        # Имя
             data.get('phone', ''),       # Телефон
@@ -288,9 +425,9 @@ def save_data_to_sheet(chat_id, username, data):
             data.get('comment', '')      # Комментарии
         ]
         sheet.append_row(row)
-        print(f"Данные для chat_id {chat_id} успешно сохранены.")
+        print(f"✅ Данные для chat_id {chat_id} успешно сохранены.")
     except Exception as e:
-        print(f"Ошибка при сохранении данных: {e}")
+        print(f"❌ Ошибка при сохранении данных: {e}")
 
 # Обработчик для любых сообщений, которые не входят в основной flow
 @bot.message_handler(func=lambda message: True)
@@ -303,6 +440,12 @@ def handle_other_messages(message):
 
 # ========== ЗАПУСК БОТА ==========
 if __name__ == '__main__':
-    print("Бот запущен...")
-
-    bot.infinity_polling()
+    print("🚀 Бот запускается...")
+    print(f"✅ Токен бота: {'Установлен' if BOT_TOKEN else 'Отсутствует'}")
+    print(f"✅ Google Таблица: {'Доступна' if sheet else 'Не доступна'}")
+    print(f"✅ Google Drive: {'Настроен' if photo_manager and GOOGLE_DRIVE_FOLDER_ID else 'Не настроен'}")
+    
+    try:
+        bot.infinity_polling(timeout=60, long_polling_timeout=60)
+    except Exception as e:
+        print(f"❌ Ошибка при запуске бота: {e}")
