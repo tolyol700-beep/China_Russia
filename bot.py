@@ -12,7 +12,7 @@ from googleapiclient.http import MediaFileUpload
 # ========== КОНФИГУРАЦИЯ ==========
 
 # Токен бота из переменных окружения
-BOT_TOKEN = 8329132359:AAEJG8vQ2DGjJUKBTchWxHYoIKBjw5_1cd0
+BOT_TOKEN = os.environ.get('BOT_TOKEN')
 
 # Настройки Google Sheets и Drive
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
@@ -61,7 +61,9 @@ class PhotoManager:
         self.drive_credentials = drive_credentials
         self.drive_folder_id = drive_folder_id
         self.temp_dir = "temp_photos"
-        os.makedirs(self.temp_dir, exist_ok=True)
+        # Создаем временную директорию если её нет
+        if not os.path.exists(self.temp_dir):
+            os.makedirs(self.temp_dir)
     
     def download_photo(self, file_id, chat_id):
         """Скачивание фото с Telegram"""
@@ -133,11 +135,15 @@ class PhotoManager:
         return drive_link if drive_link else f"Фото: {filename} (не загружено в Drive)"
 
 # Инициализация менеджера фото
-photo_manager = PhotoManager(
-    bot_token=BOT_TOKEN,
-    drive_credentials=credentials,
-    drive_folder_id=GOOGLE_DRIVE_FOLDER_ID
-) if credentials else None
+if credentials and GOOGLE_DRIVE_FOLDER_ID:
+    photo_manager = PhotoManager(
+        bot_token=BOT_TOKEN,
+        drive_credentials=credentials,
+        drive_folder_id=GOOGLE_DRIVE_FOLDER_ID
+    )
+else:
+    photo_manager = None
+    print("⚠️  Менеджер фото не инициализирован: отсутствуют credentials или folder_id")
 
 # ========== КЛАВИАТУРЫ ==========
 def phone_keyboard():
@@ -446,6 +452,7 @@ if __name__ == '__main__':
     print(f"✅ Google Drive: {'Настроен' if photo_manager and GOOGLE_DRIVE_FOLDER_ID else 'Не настроен'}")
     
     try:
+        print("🔄 Запуск long-polling...")
         bot.infinity_polling(timeout=60, long_polling_timeout=60)
     except Exception as e:
         print(f"❌ Ошибка при запуске бота: {e}")
