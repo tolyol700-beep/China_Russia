@@ -8,7 +8,7 @@ import os
 # ========== КОНФИГУРАЦИЯ ==========
 
 # Токен бота от BotFather
-BOT_TOKEN = 'YOUR_BOT_TOKEN_HERE'
+BOT_TOKEN = 8329132359:AAEJG8vQ2DGjJUKBTchWxHYoIKBjw5_1cd0
 
 # Настройки доступа к Google Sheets
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
@@ -304,4 +304,5 @@ def handle_other_messages(message):
 # ========== ЗАПУСК БОТА ==========
 if __name__ == '__main__':
     print("Бот запущен...")
+
     bot.infinity_polling()
