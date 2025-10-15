@@ -20,7 +20,7 @@ app = Flask(__name__)
 
 # ========== КОНФИГУРАЦИЯ ==========
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
-MANAGER_CHAT_IDS = [int(x.strip()) for x in os.environ.get('MANAGER_CHAT_IDS', '508551392').split(',')]
+MANAGER_CHAT_IDS = [int(x.strip()) for x in os.environ.get('MANAGER_CHAT_IDS', '508551392',  '475363648').split(',')]
 SPREADSHEET_ID = os.environ.get('SPREADSHEET_ID', '1AbgMLiQVYfLPcROOm1UMq0evFdYuRk760HhY0cI3LH8')
 
 if not BOT_TOKEN:
@@ -963,4 +963,5 @@ if __name__ == '__main__':
         logger.info("🔧 Режим: Webhook не настроен, используется polling")
     
     logger.info(f"🚀 Запуск приложения на порту {port}")
+
     app.run(host='0.0.0.0', port=port)
