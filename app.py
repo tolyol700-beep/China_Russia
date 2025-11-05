@@ -20,7 +20,7 @@ app = Flask(__name__)
 
 # ========== КОНФИГУРАЦИЯ ==========
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
-MANAGER_CHAT_IDS = [int(x.strip()) for x in os.environ.get('MANAGER_CHAT_IDS', '508551392',  '475363648').split(',')]
+MANAGER_CHAT_IDS = [int(x.strip()) for x in os.environ.get('MANAGER_CHAT_IDS', '508551392,475363648').split(',')]
 SPREADSHEET_ID = os.environ.get('SPREADSHEET_ID', '1AbgMLiQVYfLPcROOm1UMq0evFdYuRk760HhY0cI3LH8')
 
 if not BOT_TOKEN:
@@ -61,10 +61,21 @@ def init_google_sheets():
         # Проверяем структуру таблицы
         if sheet.row_count == 0:
             headers = [
-                "Статус", "Дата создания", "ID пользователя", "Username", 
-                "Имя", "Телефон", "Город назначения", 
-                "Описание груза", "Ссылка на сайт", "Фото", "Вес (кг)", 
-                "Объем (м³)", "Способ доставки", "Бюджет", "Комментарий"
+                "Статус",                    # A
+                "Дата создания",             # B
+                "User ID",                   # C
+                "Username",                  # D
+                "Имя",                       # E
+                "Телефон",                   # F
+                "Город назначения",          # G
+                "Описание груза",            # H
+                "Ссылка на сайт",            # I
+                "Фото",                      # J
+                "Вес (кг)",                  # K
+                "Объем (м³)",                # L
+                "Способ доставки",           # M
+                "Бюджет",                    # N
+                "Комментарий"                # O
             ]
             sheet.append_row(headers)
         
@@ -366,21 +377,21 @@ def process_manager_contact(message):
     if sheet:
         try:
             row = [
-                "Запрос помощи",
-                datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                str(chat_id),
-                f"@{message.from_user.username}" if message.from_user.username else "Не указан",
-                f"{message.from_user.first_name} {message.from_user.last_name or ''}".strip(),
-                "Не указан",
-                "Не указан",
-                message.text,
-                "Не указана",
-                "Не загружено",
-                "Не указан",
-                "Не указан",
-                "Не указан",
-                "Не указан",
-                "Не указан"
+                "Запрос помощи",  # A: Статус
+                datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),  # B: Дата создания
+                str(chat_id),  # C: User ID
+                f"@{message.from_user.username}" if message.from_user.username else "Не указан",  # D: Username
+                f"{message.from_user.first_name} {message.from_user.last_name or ''}".strip(),  # E: Имя
+                "Не указан",  # F: Телефон
+                "Не указан",  # G: Город назначения
+                message.text,  # H: Описание груза
+                "Не указана",  # I: Ссылка на сайт
+                "Не загружено",  # J: Фото
+                "Не указан",  # K: Вес
+                "Не указан",  # L: Объем
+                "Не указан",  # M: Способ доставки
+                "Не указан",  # N: Бюджет
+                "Не указан"   # O: Комментарий
             ]
             sheet.append_row(row)
         except Exception as e:
@@ -874,27 +885,28 @@ def save_data(data):
     # Пробуем сохранить в Google Sheets
     if sheet:
         try:
-            # Формируем строку для таблицы
+            # Формируем строку для таблицы в правильном порядке
             photo_info = data.get('photo', 'Не загружено')
             if data.get('photo_filename'):
                 photo_info = f"Фото сохранено: {data.get('photo_filename')}"
             
+            # ВАЖНО: Этот порядок должен соответствовать столбцам в вашей Google таблице
             row = [
-                "Новая заявка",
-                data.get('timestamp', ''),
-                str(data.get('user_id', '')),
-                data.get('username', ''),
-                data.get('name', ''),
-                data.get('phone', ''),
-                data.get('destination', ''),
-                data.get('cargo', ''),
-                data.get('website', ''),
-                photo_info,
-                data.get('weight', ''),
-                data.get('volume', ''),
-                data.get('delivery', ''),
-                data.get('budget', ''),
-                data.get('comment', '')
+                "Новая заявка",  # A: Статус
+                data.get('timestamp', ''),  # B: Дата создания
+                str(data.get('user_id', '')),  # C: User ID
+                data.get('username', ''),  # D: Username
+                data.get('name', ''),  # E: Имя
+                data.get('phone', ''),  # F: Телефон
+                data.get('destination', ''),  # G: Город назначения
+                data.get('cargo', ''),  # H: Описание груза
+                data.get('website', ''),  # I: Ссылка на сайт
+                photo_info,  # J: Фото
+                data.get('weight', ''),  # K: Вес
+                data.get('volume', ''),  # L: Объем
+                data.get('delivery', ''),  # M: Способ доставки
+                data.get('budget', ''),  # N: Бюджет
+                data.get('comment', '')  # O: Комментарий
             ]
             sheet.append_row(row)
             logger.info(f"✅ Данные сохранены в Google Таблицу (пользователь: {data.get('name', 'N/A')})")
